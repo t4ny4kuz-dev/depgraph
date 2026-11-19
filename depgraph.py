@@ -10,10 +10,15 @@ import gzip
 import lzma
 import os
 import re
+import shutil
+import subprocess
 import sys
+import webbrowser
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from xml.sax.saxutils import escape
 from collections import OrderedDict
 
 
@@ -108,7 +113,7 @@ def print_config(cfg):
 def fetch_packages(url):
     """Скачивает индекс Packages(.gz/.xz) и возвращает текст."""
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(url, timeout=120) as resp:
             data = resp.read()
     except urllib.error.HTTPError as e:
         raise RepoError(f"сервер ответил HTTP {e.code} для {url}")
@@ -279,6 +284,85 @@ def to_dot(graph, root, reverse=False):
     return "\n".join(lines)
 
 
+
+def to_svg(graph, root, reverse=False):
+    """Рисует граф в SVG без внешних библиотек (слои = расстояние от корня)."""
+    edges = []
+    for pkg, targets in graph.items():
+        for t in targets:
+            edges.append((t, pkg) if reverse else (pkg, t))
+    nodes = list(graph)
+    for t in graph.values():
+        for n in t:
+            if n not in nodes:
+                nodes.append(n)
+
+    level, queue = {root: 0}, [root]          # уровни по BFS от корня
+    while queue:
+        cur = queue.pop(0)
+        for n in graph.get(cur, []):
+            if n not in level:
+                level[n] = level[cur] + 1
+                queue.append(n)
+    layers = {}
+    for n in nodes:
+        layers.setdefault(level.get(n, 0), []).append(n)
+
+    W, H, GX, GY, PAD = 150, 36, 90, 24, 20
+    pos = {}
+    for lv, names in layers.items():
+        for i, n in enumerate(names):
+            pos[n] = (PAD + lv * (W + GX), PAD + i * (H + GY))
+    width = PAD * 2 + max(layers) * (W + GX) + W
+    height = PAD * 2 + max(len(v) for v in layers.values()) * (H + GY) - GY
+
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+           f'viewBox="0 0 {width} {height}" font-family="monospace" font-size="13">',
+           '<defs><marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">'
+           '<path d="M0,0 L10,4 L0,8 z" fill="#555"/></marker></defs>',
+           f'<rect width="{width}" height="{height}" fill="white"/>']
+    for a, b in edges:
+        if a == b:
+            continue
+        sx, sy = pos[a][0] + W, pos[a][1] + H / 2
+        ex, ey = pos[b][0], pos[b][1] + H / 2
+        out.append(f'<path d="M{sx},{sy} C{sx + 60},{sy} {ex - 60},{ey} {ex},{ey}" '
+                   'fill="none" stroke="#555" stroke-width="1.3" marker-end="url(#arr)"/>')
+    for n in nodes:
+        x, y = pos[n]
+        fill = "#add8e6" if n == root else "#f4f4f4"
+        label = n if len(n) <= 20 else n[:19] + "…"
+        out.append(f'<rect x="{x}" y="{y}" width="{W}" height="{H}" rx="4" fill="{fill}" stroke="#333"/>')
+        out.append(f'<text x="{x + W / 2}" y="{y + H / 2 + 5}" text-anchor="middle">{escape(label)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def save_image(graph, root, reverse, path, show=False):
+    """.svg рисуется встроенным кодом, .png/.pdf - через Graphviz (команда dot)."""
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".svg":
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(to_svg(graph, root, reverse))
+        elif ext in (".png", ".pdf"):
+            dot = shutil.which("dot")
+            if not dot:
+                raise RepoError("для PNG/PDF нужен Graphviz (команда dot). "
+                                "Установите его или используйте --image graph.svg")
+            subprocess.run([dot, "-T" + ext[1:], "-o", path],
+                           input=to_dot(graph, root, reverse).encode("utf-8"), check=True)
+        else:
+            raise RepoError(f"неподдерживаемый формат изображения '{ext}' (svg, png, pdf)")
+    except OSError as e:
+        raise RepoError(f"не удалось создать {path}: {e.strerror}")
+    except subprocess.CalledProcessError:
+        raise RepoError("Graphviz завершился с ошибкой")
+    print(f"Изображение сохранено в {path}", file=sys.stderr)
+    if show:
+        webbrowser.open(Path(path).resolve().as_uri())
+
+
 # ---------------------------------------------------------------- CLI
 def print_graph(graph, title):
     print(title)
@@ -291,7 +375,7 @@ def print_graph(graph, title):
             print("  " + " -> ".join(c))
 
 
-def run(cfg, mode, out_file):
+def run(cfg, mode, out_file, image=None, show=False):
     db = load_repo(cfg)
     root = cfg["package"]
     if root not in known_packages(db):
@@ -315,6 +399,8 @@ def run(cfg, mode, out_file):
         print(f"Всего пакетов, зависящих от {root}: {len(others)}")
         if out_file:
             save_dot(to_dot(graph, root, reverse=True), out_file)
+        if image:
+            save_image(graph, root, True, image, show)
         return
 
     graph = build_graph(lambda p: db.get(p, []), root, cfg["max_depth"], cfg["filter"])
@@ -325,6 +411,8 @@ def run(cfg, mode, out_file):
         print(dot)
         if out_file:
             save_dot(dot, out_file)
+    if image:
+        save_image(graph, root, False, image, show)
 
 
 def save_dot(dot, path):
@@ -342,6 +430,9 @@ def main():
     ap.add_argument("--mode", choices=["direct", "graph", "reverse", "dot"], default="graph",
                     help="direct - прямые зависимости, graph - граф, reverse - обратные, dot - Graphviz")
     ap.add_argument("--show-config", action="store_true", help="вывести параметры (ключ: значение)")
+    ap.add_argument("--image", help="сохранить картинку графа: .svg (встроенно) или .png/.pdf (нужен Graphviz)")
+    ap.add_argument("--show", action="store_true",
+                    help="нарисовать граф (graph.svg, если не задан --image) и открыть картинку в браузере")
     ap.add_argument("--out", help="сохранить описание Graphviz в файл (режимы dot/reverse)")
     args = ap.parse_args()
 
@@ -349,7 +440,8 @@ def main():
         cfg = load_config(args.config)
         if args.show_config:
             print_config(cfg)
-        run(cfg, args.mode, args.out)
+        image = args.image or ("graph.svg" if args.show else None)
+        run(cfg, args.mode, args.out, image, args.show)
     except (ConfigError, RepoError) as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
