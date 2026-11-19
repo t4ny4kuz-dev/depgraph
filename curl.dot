@@ -1,0 +1,6 @@
+digraph dependencies {
+  rankdir=LR;
+  node [shape=box];
+  "curl" [style=filled, fillcolor=lightblue];
+  "curl";
+}
