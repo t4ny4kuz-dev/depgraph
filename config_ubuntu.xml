@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <package>curl</package>
+    <repository>http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/Packages.gz</repository>
+    <test_mode>false</test_mode>
+    <max_depth>2</max_depth>
+    <filter>lib</filter>
+</config>

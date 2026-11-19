@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <!-- имя анализируемого пакета -->
+    <package>A</package>
+    <!-- URL репозитория (Packages.gz) или путь к файлу тестового репозитория -->
+    <repository>test_repo.txt</repository>
+    <!-- true: repository - путь к файлу тестового графа -->
+    <test_mode>true</test_mode>
+    <!-- максимальная глубина анализа -->
+    <max_depth>3</max_depth>
+    <!-- пакеты, в имени которых есть эта подстрока, пропускаются (может быть пустой) -->
+    <filter></filter>
+</config>
