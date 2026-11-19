@@ -4,11 +4,30 @@ CLI-инструмент на Python 3.8+ (только стандартная �
 Менеджеры пакетов (`apt`, `dpkg`) и сторонние библиотеки для получения зависимостей **не используются**:
 индекс `Packages.gz` скачивается по URL и разбирается вручную.
 
-## Файлы
-- `depgraph.py` — приложение
-- `config.xml` — конфиг для тестового репозитория
-- `config_ubuntu.xml` — конфиг для реального репозитория Ubuntu
-- `test_repo.txt` — тестовый граф (пакеты A, B, C… + цикл)
+## Структура репозитория
+```
+src/
+  depgraph.py   - CLI (точка входа)
+  config.py     - чтение и проверка XML-конфига
+  repo.py       - загрузка и разбор apt-репозитория / тестового файла
+  graph.py      - BFS с рекурсией, циклы, обратные зависимости
+  render.py     - Graphviz (dot), SVG, сохранение картинки
+  errors.py     - исключения
+tests/          - модульные тесты (unittest)
+config.xml          - конфиг для тестового репозитория
+config_ubuntu.xml   - конфиг для реального репозитория Ubuntu
+test_repo.txt       - тестовый граф (A, B, C... + цикл)
+run.sh / run.bat / Makefile - скрипты запуска
+.gitignore
+```
+
+## Запуск и тесты
+```
+./run.sh config.xml --show          # Linux / macOS
+run.bat config.xml --show           # Windows
+make run                            # через Makefile
+python3 -m unittest discover -s tests -v   # тесты (или: make test)
+```
 
 ## Конфигурационный файл (XML)
 
@@ -22,16 +41,16 @@ CLI-инструмент на Python 3.8+ (только стандартная �
 </config>
 ```
 
-## Запуск
+## Параметры командной строки
 ```
-python3 depgraph.py [config.xml] [--mode direct|graph|reverse|dot] [--show-config] [--out file.dot]
+python3 src/depgraph.py [config.xml] [--mode direct|graph|reverse|dot] [--show-config] [--out file.dot] [--image graph.svg|graph.png] [--show]
 ```
 
 ## Этап 1. Минимальный прототип с конфигурацией
 
 Параметры читаются из XML; `--show-config` выводит их в формате ключ-значение.
 ```
-$ python3 depgraph.py config.xml --show-config
+$ python3 src/depgraph.py config.xml --show-config
 package: A
 repository: test_repo.txt
 test_mode: true
@@ -57,7 +76,7 @@ filter:
 Скачивается `Packages.gz` (или `.xz`), разбирается формат Debian control (`Package`, `Depends`, `Pre-Depends`).
 Из зависимости убираются версии `(>= 1.0)` и архитектура `:any`; из альтернатив `a | b` берётся первая.
 ```
-python3 depgraph.py config_ubuntu.xml --mode direct
+python3 src/depgraph.py config_ubuntu.xml --mode direct
 ```
 ```
 Прямые зависимости пакета curl:
@@ -74,7 +93,7 @@ python3 depgraph.py config_ubuntu.xml --mode direct
 Граф строится BFS с рекурсией: каждый вызов `level()` обрабатывает один уровень, затем рекурсивно вызывается для следующего.
 Учитываются: `max_depth` (корень на глубине 0), фильтр по подстроке, циклы (множество `visited`, найденные циклы выводятся).
 ```
-$ python3 depgraph.py config.xml
+$ python3 src/depgraph.py config.xml
 Граф зависимостей A (глубина <= 3):
   A -> B, C
   B -> D
@@ -106,7 +125,7 @@ $ python3 depgraph.py config.xml
 
 Строится обратный индекс «пакет → кто от него зависит», далее используется тот же BFS.
 ```
-$ python3 depgraph.py config.xml --mode reverse   # package = D
+$ python3 src/depgraph.py config.xml --mode reverse   # package = D
 Обратные зависимости D (кто зависит от пакета):
   D -> B, C
   B -> A, H
@@ -123,7 +142,7 @@ $ python3 depgraph.py config.xml --mode reverse   # package = D
 ## Этап 5. Визуализация
 
 ```
-$ python3 depgraph.py config.xml --mode dot --out graph.dot
+$ python3 src/depgraph.py config.xml --mode dot --out graph.dot
 digraph dependencies {
   rankdir=LR;
   node [shape=box];
@@ -138,7 +157,12 @@ digraph dependencies {
   "F";
 }
 ```
-Картинка: `dot -Tpng graph.dot -o graph.png` (или онлайн-редактор Graphviz).
+Картинка:
+```
+python3 src/depgraph.py config.xml --image graph.svg   # встроенный рендер, ничего ставить не надо (открыть в браузере)
+python3 src/depgraph.py config.xml --image graph.png   # PNG через Graphviz (нужна команда dot)
+```
+Работает и с `--mode reverse`.
 
 Для трёх реальных пакетов (например `curl`, `git`, `nginx`) нужно сделать скриншоты:
 
@@ -159,7 +183,7 @@ digraph dependencies {
 ## Коммиты
 ```
 git init
-git add depgraph.py config.xml config_ubuntu.xml test_repo.txt README.md
+git add -A
 git commit -m "feat(stage1): CLI prototype with XML configuration"
 ```
 (по одному коммиту на этап, сообщения указаны в каждом разделе)
